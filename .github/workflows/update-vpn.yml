@@ -1,33 +1,36 @@
 name: Scheduled VPN Config Update
 
-# Запускаем каждые 30 минут
 on:
   schedule:
-    # Крон-выражение: "Минута Час ДеньМесяца Месяц ДеньНедели"
     - cron: '*/30 * * * *'
-  # Разрешаем ручной запуск для отладки (появится кнопка в интерфейсе GitHub)
   workflow_dispatch:
 
 jobs:
   update-configs:
     runs-on: ubuntu-latest
     steps:
-      # 1. Загружаем код из нашего репозитория (чтобы скрипт был доступен)
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 2. Даём скрипту права на выполнение
       - name: Make script executable
         run: chmod +x ./scripts/update_happ.sh
 
-      # 3. Запускаем наш главный скрипт
       - name: Run Happ auto-update script
+        id: run_script
+        # Разрешаем скрипту падать с ошибкой, но мы всё равно сохраним артефакты
+        continue-on-error: true
         run: ./scripts/update_happ.sh
 
-      # 4. (Опционально) Сохраняем скриншоты как артефакты, чтобы посмотреть, что происходило
-      - name: Upload screenshots as artifacts
+      - name: Upload logs and screenshots
         uses: actions/upload-artifact@v4
-        if: always() # Сохраняем артефакты, даже если скрипт упал с ошибкой
+        if: always()  # Загружать всегда, независимо от успеха/падения
         with:
-          name: happ-screenshots
-          path: /tmp/happ-*.png
+          name: debug-artifacts
+          path: |
+            /tmp/happ-*.png
+            /tmp/happ-setup.log
+            /tmp/xvfb.log
+
+      - name: Fail job if script failed
+        if: steps.run_script.outcome == 'failure'
+        run: exit 1
