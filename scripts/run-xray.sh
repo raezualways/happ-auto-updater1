@@ -1,19 +1,19 @@
 #!/bin/bash
 set -e
 
-# Фиксируем PATH на случай, если окружение его потеряло
+# --- 1. Фиксируем PATH на случай потери ---
 export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 echo "🔄 Скачиваем свежие конфиги..."
 mkdir -p /tmp/xray-configs
 cd /tmp/xray-configs
 
-# Скачиваем конфиги (второй файл может отсутствовать, это нормально)
-wget -q -O black.txt "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt" || echo "⚠️ black не скачался"
-wget -q -O white.txt "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE_VLESS_RUS_mobile.txt" || echo "⚠️ white не скачался"
+# Скачиваем подписки
+/usr/bin/wget -q -O black.txt "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt" || echo "⚠️ black не скачался"
+/usr/bin/wget -q -O white.txt "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE_VLESS_RUS_mobile.txt" || echo "⚠️ white не скачался"
 
-# Объединяем все в один файл (если white нет, используем только black)
-touch all-configs.txt
+# Объединяем все конфиги
+/bin/touch all-configs.txt
 if [ -f black.txt ]; then /bin/cat black.txt >> all-configs.txt; fi
 if [ -f white.txt ]; then /bin/cat white.txt >> all-configs.txt; fi
 
@@ -22,10 +22,10 @@ if [ ! -s all-configs.txt ]; then
     exit 1
 fi
 
-# Выбираем случайную строку и пытаемся её распарсить
+# --- 2. Выбираем случайный конфиг, пропуская неподдерживаемые протоколы ---
 ATTEMPTS=0
 while [ $ATTEMPTS -lt 10 ]; do
-    SELECTED=$(shuf -n 1 all-configs.txt)
+    SELECTED=$(/usr/bin/shuf -n 1 all-configs.txt)
     echo "Попытка $((ATTEMPTS+1)): $SELECTED"
 
     if [[ $SELECTED =~ ^vless:// ]]; then
@@ -45,18 +45,17 @@ if [ -z "$PROTO" ]; then
     exit 1
 fi
 
-# --- Установка Xray, если ещё нет ---
-if ! command -v xray &> /dev/null; then
+# --- 3. Установка Xray-core, если ещё нет ---
+if ! /usr/bin/which xray &> /dev/null; then
     echo "📦 Устанавливаем Xray-core..."
-    curl -L https://github.com/XTLS/Xray-core/releases/download/v1.8.23/Xray-linux-64.zip -o /tmp/xray.zip
-    unzip -q /tmp/xray.zip -d /tmp/xray
-    sudo cp /tmp/xray/xray /usr/local/bin/
-    sudo chmod +x /usr/local/bin/xray
+    /usr/bin/curl -L https://github.com/XTLS/Xray-core/releases/download/v1.8.23/Xray-linux-64.zip -o /tmp/xray.zip
+    /usr/bin/unzip -q /tmp/xray.zip -d /tmp/xray
+    sudo /bin/cp /tmp/xray/xray /usr/local/bin/xray
+    sudo /bin/chmod +x /usr/local/bin/xray
 fi
 
-# --- Парсинг и генерация конфига в зависимости от протокола ---
+# --- 4. Генерация конфигурации Xray ---
 if [ "$PROTO" = "vless" ]; then
-    # Парсинг vless://...
     if [[ $SELECTED =~ ^vless://([^@]+)@([^:]+):([0-9]+)\?(.*)$ ]]; then
         UUID="${BASH_REMATCH[1]}"
         HOST="${BASH_REMATCH[2]}"
@@ -78,8 +77,7 @@ if [ "$PROTO" = "vless" ]; then
         SNI="${query[sni]:-$HOST}"
         FLOW="${query[flow]:-}"
 
-        # Генерация JSON без использования cat (через printf)
-        printf '{
+        /usr/bin/printf '{
   "inbounds": [{
     "port": 1080,
     "listen": "127.0.0.1",
@@ -110,14 +108,11 @@ if [ "$PROTO" = "vless" ]; then
     }
   }]
 }\n' "$HOST" "$PORT" "$UUID" "$ENCRYPTION" "$FLOW" "$TYPE" "$SECURITY" "$SNI" "$PATH" "$HOST_HEADER" > /tmp/config.json
-
     else
         echo "❌ Ошибка парсинга vless"
         exit 1
     fi
-
 elif [ "$PROTO" = "trojan" ]; then
-    # Парсинг trojan://password@host:port?params#name
     if [[ $SELECTED =~ ^trojan://([^@]+)@([^:]+):([0-9]+)\?(.*)#.*$ ]]; then
         PASSWORD="${BASH_REMATCH[1]}"
         HOST="${BASH_REMATCH[2]}"
@@ -128,8 +123,7 @@ elif [ "$PROTO" = "trojan" ]; then
         IFS='&' read -ra pairs <<< "$PARAMS"
         for pair in "${pairs[@]}"; do
             IFS='=' read -r key value <<< "$pair"
-            # Простейшее URL-декодирование (для path)
-            value=$(echo "$value" | sed 's/%2F/\//g; s/%3D/=/g; s/%3A/:/g')
+            value=$(echo "$value" | /bin/sed 's/%2F/\//g; s/%3D/=/g; s/%3A/:/g')
             query["$key"]="$value"
         done
 
@@ -139,7 +133,7 @@ elif [ "$PROTO" = "trojan" ]; then
         HOST_HEADER="${query[host]:-$HOST}"
         SNI="${query[sni]:-$HOST}"
 
-        printf '{
+        /usr/bin/printf '{
   "inbounds": [{
     "port": 1080,
     "listen": "127.0.0.1",
@@ -166,21 +160,20 @@ elif [ "$PROTO" = "trojan" ]; then
     }
   }]
 }\n' "$HOST" "$PORT" "$PASSWORD" "$TYPE" "$SECURITY" "$SNI" "$PATH" "$HOST_HEADER" > /tmp/config.json
-
     else
         echo "❌ Ошибка парсинга trojan"
         exit 1
     fi
 fi
 
-# --- Запуск и проверка ---
+# --- 5. Запуск Xray и проверка ---
 echo "🚀 Запускаем Xray с протоколом $PROTO..."
-xray run -c /tmp/config.json &
+/usr/local/bin/xray run -c /tmp/config.json &
 XRAY_PID=$!
-sleep 5
+/bin/sleep 5
 
 echo "🌐 Проверка IP через прокси..."
-IP=$(curl -s --socks5 127.0.0.1:1080 ifconfig.me)
+IP=$(/usr/bin/curl -s --socks5 127.0.0.1:1080 ifconfig.me)
 if [ -n "$IP" ]; then
     echo "✅ VPN работает. IP: $IP"
 else
