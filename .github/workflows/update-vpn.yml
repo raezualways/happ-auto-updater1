@@ -1,4 +1,4 @@
-name: Scheduled VPN Config Update
+name: Update Xray Configs Every 30 Min
 
 on:
   schedule:
@@ -6,31 +6,18 @@ on:
   workflow_dispatch:
 
 jobs:
-  update-configs:
+  update-and-test:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Make script executable
-        run: chmod +x ./scripts/update_happ.sh
+      - name: Run Xray updater
+        run: bash ./scripts/run-xray.sh
 
-      - name: Run Happ auto-update script
-        id: run_script
-        # Разрешаем скрипту падать с ошибкой, но мы всё равно сохраним артефакты
-        continue-on-error: true
-        run: ./scripts/update_happ.sh
-
-      - name: Upload logs and screenshots
+      - name: Upload logs (if any)
         uses: actions/upload-artifact@v4
-        if: always()  # Загружать всегда, независимо от успеха/падения
+        if: always()
         with:
-          name: debug-artifacts
-          path: |
-            /tmp/happ-*.png
-            /tmp/happ-setup.log
-            /tmp/xvfb.log
-
-      - name: Fail job if script failed
-        if: steps.run_script.outcome == 'failure'
-        run: exit 1
+          name: xray-logs
+          path: /tmp/xray-configs/
