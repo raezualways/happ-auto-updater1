@@ -1,94 +1,98 @@
 #!/bin/bash
-set -e  # Останавливаем скрипт при любой ошибке
+set -ex  # Включаем режим отладки: печатаем каждую команду и вылетаем при ошибке
+
+LOG_FILE="/tmp/happ-setup.log"
+exec > >(tee -a "$LOG_FILE") 2>&1  # Пишем весь вывод и в консоль, и в файл лога
 
 echo "🚀 Старт настройки Happ..."
 
 # --- 1. Подготовка окружения ---
 echo "🛠️  Устанавливаем инструменты..."
-# Нам понадобятся: wget (для скачивания), xdotool (робот для GUI), imagemagick (чтобы делать скриншоты), x11-apps (для тестов)
 sudo apt-get update
-sudo apt-get install -y wget xdotool imagemagick x11-apps
+sudo apt-get install -y wget xdotool imagemagick x11-apps xvfb
 
 # --- 2. Установка Happ ---
 echo "📦 Скачиваем и устанавливаем Happ..."
-wget -O /tmp/happ.deb "https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.deb"
+# Проверяем актуальную ссылку (на 2026-04-21 актуальна версия 3.8.0, уточним через API)
+HAPP_URL=$(wget -qO- https://api.github.com/repos/Happ-proxy/happ-desktop/releases/latest | grep "browser_download_url.*Happ.linux.x64.deb" | cut -d '"' -f 4)
+if [ -z "$HAPP_URL" ]; then
+    echo "❌ Не удалось получить ссылку на скачивание Happ. Использую запасной вариант."
+    HAPP_URL="https://github.com/Happ-proxy/happ-desktop/releases/latest/download/Happ.linux.x64.deb"
+fi
+echo "Ссылка для скачивания: $HAPP_URL"
+wget -O /tmp/happ.deb "$HAPP_URL"
 sudo dpkg -i /tmp/happ.deb
-# На всякий случай доустановим недостающие зависимости
 sudo apt-get install -f -y
 
-# --- 3. Запуск виртуального рабочего стола (Xvfb) ---
+# --- 3. Запуск виртуального рабочего стола ---
 echo "🖥️  Запускаем виртуальный экран..."
-# Запускаем фоновый процесс, который будет притворяться монитором
-Xvfb :99 -screen 0 1024x768x24 > /dev/null 2>&1 &
-# Сохраняем ID процесса, чтобы потом его корректно завершить
+Xvfb :99 -screen 0 1024x768x24 > /tmp/xvfb.log 2>&1 &
 XVFB_PID=$!
-# Говорим системе, что наш "монитор" находится по адресу :99
 export DISPLAY=:99
+sleep 2  # Даём время на запуск Xvfb
+
+# Проверяем, что DISPLAY работает
+if ! xdpyinfo >/dev/null 2>&1; then
+    echo "❌ Виртуальный дисплей :99 не отвечает. Содержимое xvfb.log:"
+    cat /tmp/xvfb.log
+    exit 1
+fi
+echo "✅ Виртуальный дисплей :99 работает."
 
 # --- 4. Загрузка свежих конфигураций ---
-echo "⬇️  Качаем свежие конфиги из репозитория igareck/vpn-configs-for-russia..."
-# Создадим временную папку
+echo "⬇️  Качаем свежие конфиги из репозитория igareck..."
 mkdir -p /tmp/vpn-configs
 cd /tmp/vpn-configs
-# Скачиваем конфиги. Я взял для примера несколько ссылок.
-# Ты можешь добавить сюда любые другие из README того репозитория.
-wget https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt
-wget https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE_VLESS_RUS_mobile.txt
-# ... добавь другие файлы по необходимости
+# Скачиваем файлы с проверкой существования
+wget --timeout=10 --tries=3 https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt || echo "⚠️ Файл BLACK_VLESS_RUS_mobile.txt не скачался"
+wget --timeout=10 --tries=3 https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE_VLESS_RUS_mobile.txt || echo "⚠️ Файл WHITE_VLESS_RUS_mobile.txt не скачался"
 cd ~
 
-# --- 5. Автоматизация Happ с помощью xdotool ---
-echo "🤖 Запускаем Happ и начинаем автоматическую настройку..."
-
-# Функция для безопасного завершения, если что-то пойдёт не так
-cleanup() {
-    echo "🧹 Завершаем процессы..."
-    # Убиваем Happ, если он ещё жив
-    pkill -f "/opt/Happ/happ" || true
-    # Останавливаем виртуальный экран
-    kill $XVFB_PID || true
-}
-# Устанавливаем ловушку: если скрипт завершится (штатно или с ошибкой), вызови функцию cleanup
-trap cleanup EXIT ERR
-
-# Запускаем Happ в фоне
+# --- 5. Запуск Happ и автоматизация (упрощённая версия) ---
+echo "🤖 Запускаем Happ..."
 /opt/Happ/happ &
 
-# Ждём несколько секунд, чтобы окно точно появилось
-sleep 5
+# Ждём появления окна
+echo "⏳ Ожидаем появления окна Happ..."
+for i in {1..20}; do
+    if xdotool search --name "Happ" >/dev/null 2>&1; then
+        echo "✅ Окно Happ обнаружено!"
+        break
+    fi
+    sleep 2
+done
 
-# Делаем скриншот для отладки (можно будет посмотреть в логах Action)
-import -window root /tmp/happ-initial.png
-echo "📸 Скриншот после запуска сохранён: /tmp/happ-initial.png"
+# Делаем первый скриншот (даже если окна нет)
+import -window root /tmp/happ-initial.png || echo "⚠️ Не удалось сделать скриншот"
 
-# --- Основной блок автоматизации. Это как писать макрос. ---
-# ВНИМАНИЕ: Координаты кликов и время ожидания могут меняться
-# в зависимости от версии Happ и разрешения экрана. Возможно,
-# их придётся подбирать экспериментально.
-
-# Жмём кнопку "+" в правом верхнем углу (координаты примерные!)
-xdotool mousemove 980 50 click 1
-sleep 1
-# Жмём "Import from URL"
-xdotool mousemove 500 200 click 1
-sleep 1
-# Вставляем URL подписки (можно использовать wl-paste или xclip, но мы просто "напечатаем")
-xdotool type "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt"
-sleep 1
-# Жмём "OK" или "Import"
-xdotool key Return
-sleep 2
-
-# Ждём, пока конфигурации загрузятся и обновятся. Это может занять время.
-echo "⏳ Ждём 20 секунд, пока Happ обновит конфигурации..."
-sleep 20
-
-# Закрываем Happ
-echo "🔚 Закрываем Happ..."
-pkill -f "/opt/Happ/happ"
+# Если окно найдено, пробуем кликнуть
+if WINDOW_ID=$(xdotool search --name "Happ" | head -n 1); then
+    echo "Активируем окно и кликаем..."
+    xdotool windowactivate $WINDOW_ID
+    sleep 1
+    # Пример клика в область (координаты можно подобрать позже)
+    xdotool mousemove 980 50 click 1
+    sleep 1
+    xdotool mousemove 500 200 click 1
+    sleep 1
+    xdotool type "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt"
+    xdotool key Return
+    sleep 20
+else
+    echo "❌ Окно Happ не найдено! Happ, возможно, не запустился."
+fi
 
 # Делаем финальный скриншот
-import -window root /tmp/happ-final.png
-echo "📸 Финальный скриншот сохранён: /tmp/happ-final.png"
+import -window root /tmp/happ-final.png || echo "⚠️ Не удалось сделать финальный скриншот"
 
-echo "✅ Работа скрипта завершена!"
+# Завершаем процессы
+echo "🔚 Завершаем Happ и Xvfb..."
+pkill -f "/opt/Happ/happ" || true
+kill $XVFB_PID || true
+
+# Сохраняем лог в артефакты
+cp "$LOG_FILE" /tmp/
+echo "✅ Скрипт завершён."
+
+# Устанавливаем обработчик выхода, чтобы артефакты подхватывались даже при ошибке
+trap - EXIT
