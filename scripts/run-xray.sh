@@ -5,7 +5,7 @@ echo "🔄 Скачиваем свежие конфиги..."
 mkdir -p /tmp/xray-configs
 cd /tmp/xray-configs
 
-# Скачиваем подписки
+# Правильные ссылки (исправлено)
 wget -q -O black.txt "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt" || echo "⚠️ black не скачался"
 wget -q -O white.txt "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE_VLESS_RUS_mobile.txt" || echo "⚠️ white не скачался"
 
@@ -27,7 +27,6 @@ if [[ $SELECTED =~ ^vless://([^@]+)@([^:]+):([0-9]+)\?(.*)$ ]]; then
     PORT="${BASH_REMATCH[3]}"
     PARAMS="${BASH_REMATCH[4]}"
 
-    # Парсим параметры запроса
     declare -A query
     IFS='&' read -ra pairs <<< "$PARAMS"
     for pair in "${pairs[@]}"; do
@@ -43,15 +42,6 @@ if [[ $SELECTED =~ ^vless://([^@]+)@([^:]+):([0-9]+)\?(.*)$ ]]; then
     SNI="${query[sni]:-$HOST}"
     FLOW="${query[flow]:-}"
 
-    echo "📋 Параметры:"
-    echo "  UUID: $UUID"
-    echo "  Host: $HOST"
-    echo "  Port: $PORT"
-    echo "  Security: $SECURITY"
-    echo "  Type: $TYPE"
-    echo "  Path: $PATH"
-
-    # Генерируем конфиг Xray
     cat > /tmp/config.json <<EOF
 {
   "inbounds": [{
