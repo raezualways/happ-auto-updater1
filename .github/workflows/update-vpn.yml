@@ -12,12 +12,17 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y unzip curl
+
       - name: Run Xray updater
         run: bash ./scripts/run-xray.sh
 
-      - name: Upload logs (if any)
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: xray-logs
-          path: /tmp/xray-configs/
+          name: xray-artifacts
+          path: |
+            /tmp/xray-configs/
+            /tmp/config.json
