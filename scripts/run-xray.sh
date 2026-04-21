@@ -1,16 +1,22 @@
 #!/bin/bash
 set -e
 
+# Фиксируем PATH на случай, если окружение его потеряло
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
 echo "🔄 Скачиваем свежие конфиги..."
 mkdir -p /tmp/xray-configs
 cd /tmp/xray-configs
 
-# Скачиваем конфиги
+# Скачиваем конфиги (второй файл может отсутствовать, это нормально)
 wget -q -O black.txt "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/BLACK_VLESS_RUS_mobile.txt" || echo "⚠️ black не скачался"
 wget -q -O white.txt "https://raw.githubusercontent.com/igareck/vpn-configs-for-russia/main/WHITE_VLESS_RUS_mobile.txt" || echo "⚠️ white не скачался"
 
-# Объединяем все в один файл
-cat black.txt white.txt > all-configs.txt 2>/dev/null || true
+# Объединяем все в один файл (если white нет, используем только black)
+touch all-configs.txt
+if [ -f black.txt ]; then /bin/cat black.txt >> all-configs.txt; fi
+if [ -f white.txt ]; then /bin/cat white.txt >> all-configs.txt; fi
+
 if [ ! -s all-configs.txt ]; then
     echo "❌ Нет конфигов для обработки"
     exit 1
@@ -72,8 +78,8 @@ if [ "$PROTO" = "vless" ]; then
         SNI="${query[sni]:-$HOST}"
         FLOW="${query[flow]:-}"
 
-        cat > /tmp/config.json <<EOF
-{
+        # Генерация JSON без использования cat (через printf)
+        printf '{
   "inbounds": [{
     "port": 1080,
     "listen": "127.0.0.1",
@@ -84,27 +90,27 @@ if [ "$PROTO" = "vless" ]; then
     "protocol": "vless",
     "settings": {
       "vnext": [{
-        "address": "$HOST",
-        "port": $PORT,
+        "address": "%s",
+        "port": %s,
         "users": [{
-          "id": "$UUID",
-          "encryption": "$ENCRYPTION",
-          "flow": "$FLOW"
+          "id": "%s",
+          "encryption": "%s",
+          "flow": "%s"
         }]
       }]
     },
     "streamSettings": {
-      "network": "$TYPE",
-      "security": "$SECURITY",
-      "tlsSettings": { "serverName": "$SNI" },
+      "network": "%s",
+      "security": "%s",
+      "tlsSettings": { "serverName": "%s" },
       "wsSettings": {
-        "path": "$PATH",
-        "headers": { "Host": "$HOST_HEADER" }
+        "path": "%s",
+        "headers": { "Host": "%s" }
       }
     }
   }]
-}
-EOF
+}\n' "$HOST" "$PORT" "$UUID" "$ENCRYPTION" "$FLOW" "$TYPE" "$SECURITY" "$SNI" "$PATH" "$HOST_HEADER" > /tmp/config.json
+
     else
         echo "❌ Ошибка парсинга vless"
         exit 1
@@ -122,7 +128,7 @@ elif [ "$PROTO" = "trojan" ]; then
         IFS='&' read -ra pairs <<< "$PARAMS"
         for pair in "${pairs[@]}"; do
             IFS='=' read -r key value <<< "$pair"
-            # URL декодирование (упрощённо)
+            # Простейшее URL-декодирование (для path)
             value=$(echo "$value" | sed 's/%2F/\//g; s/%3D/=/g; s/%3A/:/g')
             query["$key"]="$value"
         done
@@ -133,8 +139,7 @@ elif [ "$PROTO" = "trojan" ]; then
         HOST_HEADER="${query[host]:-$HOST}"
         SNI="${query[sni]:-$HOST}"
 
-        cat > /tmp/config.json <<EOF
-{
+        printf '{
   "inbounds": [{
     "port": 1080,
     "listen": "127.0.0.1",
@@ -145,23 +150,23 @@ elif [ "$PROTO" = "trojan" ]; then
     "protocol": "trojan",
     "settings": {
       "servers": [{
-        "address": "$HOST",
-        "port": $PORT,
-        "password": "$PASSWORD"
+        "address": "%s",
+        "port": %s,
+        "password": "%s"
       }]
     },
     "streamSettings": {
-      "network": "$TYPE",
-      "security": "$SECURITY",
-      "tlsSettings": { "serverName": "$SNI" },
+      "network": "%s",
+      "security": "%s",
+      "tlsSettings": { "serverName": "%s" },
       "wsSettings": {
-        "path": "$PATH",
-        "headers": { "Host": "$HOST_HEADER" }
+        "path": "%s",
+        "headers": { "Host": "%s" }
       }
     }
   }]
-}
-EOF
+}\n' "$HOST" "$PORT" "$PASSWORD" "$TYPE" "$SECURITY" "$SNI" "$PATH" "$HOST_HEADER" > /tmp/config.json
+
     else
         echo "❌ Ошибка парсинга trojan"
         exit 1
@@ -180,7 +185,7 @@ if [ -n "$IP" ]; then
     echo "✅ VPN работает. IP: $IP"
 else
     echo "❌ Не удалось подключиться через прокси"
-    cat /tmp/config.json
+    /bin/cat /tmp/config.json
     exit 1
 fi
 
